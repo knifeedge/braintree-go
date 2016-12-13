@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 )
 
 type Environment string
@@ -16,6 +17,8 @@ const (
 	Production  Environment = "production"
 
 	LibraryVersion = "0.9.0"
+	MaxRetries     = 5
+	RetryDuration  = 3 * time.Second
 )
 
 func (e Environment) BaseURL() string {
@@ -99,9 +102,21 @@ func (g *Braintree) execute(method, path string, xmlObj interface{}) (*Response,
 	}
 
 	resp, err := httpClient.Do(req)
+	var i = 0
 	if err != nil {
-		return nil, err
+		// Retry settlement with MaxRetries and RetryDuration.
+		for i = 0; i < MaxRetries; i++ {
+			time.Sleep(RetryDuration)
+			resp, err = httpClient.Do(req)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf(fmt.Sprintf("Request failed after %d attempts, after %s seconds.", i, RetryDuration*MaxRetries))
+		}
 	}
+
 	defer resp.Body.Close()
 
 	btr := &Response{
