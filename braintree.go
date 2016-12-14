@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"time"
+	"net/url"
 )
 
 type Environment string
@@ -17,9 +18,15 @@ const (
 	Production  Environment = "production"
 
 	LibraryVersion = "0.9.0"
-	MaxRetries     = 5
-	RetryDuration  = 3 * time.Second
 )
+
+type HTTPClient interface {
+	Do(req *http.Request) (res *http.Response, err error)
+	Get(url string) (res *http.Response, err error)
+	Post(urstring, bodyType string, body io.Reader) (res *http.Response, err error)
+	PostForm(url string, values url.Values) (res *http.Response, err error)
+	Head(url string) (res *http.Response, err error)
+}
 
 func (e Environment) BaseURL() string {
 	switch e {
@@ -42,7 +49,7 @@ func New(env Environment, merchId, pubKey, privKey string) *Braintree {
 	}
 }
 
-func NewWithHttpClient(env Environment, merchantId, publicKey, privateKey string, client *http.Client) *Braintree {
+func NewWithHttpClient(env Environment, merchantId, publicKey, privateKey string, client HTTPClient) *Braintree {
 	return &Braintree{
 		Environment: env,
 		MerchantId:  merchantId,
@@ -58,7 +65,7 @@ type Braintree struct {
 	PublicKey   string
 	PrivateKey  string
 	Logger      *log.Logger
-	HttpClient  *http.Client
+	HttpClient  HTTPClient
 }
 
 func (g *Braintree) MerchantURL() string {
@@ -102,21 +109,9 @@ func (g *Braintree) execute(method, path string, xmlObj interface{}) (*Response,
 	}
 
 	resp, err := httpClient.Do(req)
-	var i = 0
 	if err != nil {
-		// Retry settlement with MaxRetries and RetryDuration.
-		for i = 0; i < MaxRetries; i++ {
-			time.Sleep(RetryDuration)
-			resp, err = httpClient.Do(req)
-			if err == nil {
-				break
-			}
-		}
-		if err != nil {
-			return nil, fmt.Errorf(fmt.Sprintf("Request failed after %d attempts, after %s seconds.", i, RetryDuration*MaxRetries))
-		}
+		return nil, err
 	}
-
 	defer resp.Body.Close()
 
 	btr := &Response{
